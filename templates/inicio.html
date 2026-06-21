@@ -1,0 +1,127 @@
+{% extends "base.html" %}
+{% block contenido %}
+<section class="hero">
+  <div>
+    <p class="eyebrow">NUEVA SOLICITUD</p>
+    <h1>Preparar documentación de internación</h1>
+    <p>Esta PC puede procesar hasta {{ max_automatizaciones }} pacientes al mismo tiempo. Los adicionales quedarán en cola.</p>
+  </div>
+</section>
+<section class="card">
+  <form method="post" action="{{ url_for('crear_trabajo') }}" class="grid">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <label>Nº de internación<input name="internacion" required inputmode="numeric"></label>
+    <label>DNI<input name="dni" required inputmode="numeric"></label>
+    <fieldset><legend>Estado del paciente</legend><label class="radio"><input type="radio" name="estado_paciente" value="ACTIVO" checked> Actualmente internado (ACTIVAS)</label><label class="radio"><input type="radio" name="estado_paciente" value="ALTA"> Tiene alta (TODAS)</label></fieldset>
+    <fieldset><legend>Período solicitado</legend><label class="radio"><input type="radio" name="rango_tipo" value="TODA" checked> Toda la internación</label><label class="radio"><input type="radio" name="rango_tipo" value="RANGO"> Rango de fechas</label><div class="dates"><input type="date" name="fecha_desde"><input type="date" name="fecha_hasta"></div></fieldset>
+    <button class="span">Agregar paciente</button>
+  </form>
+</section>
+<section>
+  <h2>Pacientes cargados</h2>
+  {% if trabajos %}
+  <div class="jobs">
+  {% for t in trabajos %}
+    <article class="job card" data-trabajo-id="{{ t.id }}" data-estado="{{ t.estado }}">
+      <div>
+        <strong>Internación {{ t.internacion }}</strong>
+        <span>DNI {{ t.dni }} · {{ "ACTIVAS" if t.estado_paciente == "ACTIVO" else "TODAS" }}</span>
+        <span>{% if t.rango_tipo == "RANGO" %}{{ t.fecha_desde }} al {{ t.fecha_hasta }}{% else %}Toda la internación{% endif %}</span>
+        <span class="job-message">{{ t.mensaje }}</span>
+      </div>
+      <b class="status {{ t.estado|lower|replace(' ', '-') }}" data-role="status">{{ t.estado }}</b>
+      <div class="progress-panel{% if t.estado not in ('EN COLA', 'EN PROCESO') %} is-hidden{% endif %}" data-role="progress-panel">
+        <div class="progress-copy">
+          <strong data-role="progress-stage">{{ t.etapa or "Procesando" }}</strong>
+          <span data-role="progress-percent">{{ t.progreso or 0 }}%</span>
+        </div>
+        <div class="progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="{{ t.progreso or 0 }}">
+          <div class="progress-fill" data-role="progress-fill" style="width: {{ t.progreso or 0 }}%"></div>
+        </div>
+        <small>Podés cargar otros pacientes o cerrar esta página: la cola continúa en el servidor.</small>
+      </div>
+      {% if t.archivos_count %}
+      <div class="patient-files">
+        <a class="button secondary" href="{{ url_for('archivos_trabajo', trabajo_id=t.id) }}">Ver archivos ({{ t.archivos_count }})</a>
+        <a class="button secondary" target="_blank" href="{{ url_for('imprimir_trabajo', trabajo_id=t.id) }}">Imprimir todo</a>
+        <a class="button" href="{{ url_for('descargar_trabajo', trabajo_id=t.id) }}">Descargar todo</a>
+      </div>
+      {% endif %}
+      {% if t.estado not in ("EN COLA", "EN PROCESO") %}
+      <form method="post" action="{{ url_for('ejecutar', trabajo_id=t.id) }}" class="credentials">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input name="hospital_usuario" placeholder="Usuario Hospital" required autocomplete="off">
+        <input name="hospital_clave" type="password" placeholder="Contraseña Hospital" required autocomplete="new-password">
+        <button>Agregar a la cola</button>
+      </form>
+      <form method="post" action="{{ url_for('borrar_trabajo', trabajo_id=t.id) }}" class="delete-form" onsubmit="return confirm('¿Borrar este intento?')">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button class="danger">Borrar intento</button>
+      </form>
+      {% endif %}
+    </article>
+  {% endfor %}
+  </div>
+  {% else %}<p class="empty">Todavía no hay pacientes cargados.</p>{% endif %}
+</section>
+<script>
+(() => {
+  const cards = new Map(
+    [...document.querySelectorAll("[data-trabajo-id]")].map(card => [
+      Number(card.dataset.trabajoId), card
+    ])
+  );
+  if (!cards.size) return;
+
+  const update = job => {
+    const card = cards.get(job.id);
+    if (!card) return;
+    const estadoAnterior = card.dataset.estado;
+    const status = card.querySelector('[data-role="status"]');
+    const message = card.querySelector(".job-message");
+    const panel = card.querySelector('[data-role="progress-panel"]');
+    const fill = card.querySelector('[data-role="progress-fill"]');
+    const stage = card.querySelector('[data-role="progress-stage"]');
+    const percent = card.querySelector('[data-role="progress-percent"]');
+    const track = card.querySelector(".progress-track");
+
+    status.textContent = job.estado;
+    status.className = `status ${job.estado.toLowerCase().replaceAll(" ", "-")}`;
+    card.dataset.estado = job.estado;
+    message.textContent = job.mensaje || "";
+    stage.textContent = job.etapa || "Procesando";
+    percent.textContent = `${job.progreso || 0}%`;
+    fill.style.width = `${job.progreso || 0}%`;
+    track.setAttribute("aria-valuenow", job.progreso || 0);
+    panel.classList.toggle(
+      "is-hidden",
+      !["EN COLA", "EN PROCESO"].includes(job.estado)
+    );
+
+    if (
+      ["EN COLA", "EN PROCESO"].includes(estadoAnterior) &&
+      (job.estado === "COMPLETADO" || job.estado === "ERROR")
+    ) {
+      setTimeout(() => location.reload(), 1200);
+    }
+  };
+
+  const poll = async () => {
+    try {
+      const response = await fetch("{{ url_for('estado_trabajos') }}", {
+        headers: {"Accept": "application/json"},
+        cache: "no-store"
+      });
+      if (response.ok) {
+        (await response.json()).forEach(update);
+      }
+    } catch (_) {
+      // Un corte breve de red no detiene el trabajo del servidor.
+    }
+  };
+
+  poll();
+  setInterval(poll, 2000);
+})();
+</script>
+{% endblock %}

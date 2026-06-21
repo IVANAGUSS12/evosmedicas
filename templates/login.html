@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block contenido %}
+<section class="login card">
+  <h1>Ingreso al sistema</h1>
+  <p>Acceso para personal autorizado.</p>
+  <form method="post">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <label>Usuario<input name="usuario" required autofocus></label>
+    <label>Contraseña<input name="clave" type="password" required></label>
+    <button>Ingresar</button>
+  </form>
+</section>
+{% endblock %}

@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Secretario de Sala</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}">
+</head>
+<body>
+  <header>
+    <div><strong>SECRETARIO DE SALA</strong><span>CEMIC · Automatización documental</span></div>
+    {% if session.usuario %}
+      <nav>
+        <span>{{ session.usuario }}</span>
+        {% if session.administrador %}<a href="{{ url_for('usuarios') }}">Usuarios</a>{% endif %}
+        <form method="post" action="{{ url_for('salir') }}" class="logout-form">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <button type="submit" class="link-button">Salir</button>
+        </form>
+      </nav>
+    {% endif %}
+  </header>
+  <main>
+    {% for mensaje in get_flashed_messages() %}<div class="flash">{{ mensaje }}</div>{% endfor %}
+    {% block contenido %}{% endblock %}
+  </main>
+</body>
+</html>
