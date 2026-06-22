@@ -14,6 +14,8 @@ mismo tiempo según la capacidad elegida.
 - Toda la internación o rango de fechas.
 - Descarga de informe de hospitalización, documentación, evoluciones,
   epicrisis, indicaciones y prescripciones.
+- Evoluciones divididas en archivos de hasta 5 páginas del sistema para
+  reducir bloqueos durante la generación.
 - Barra de progreso y posición en cola.
 - Dos, tres o cuatro Chromium simultáneos según la capacidad de la PC.
 - Archivos y trabajos visibles únicamente para el usuario que los creó.
@@ -101,6 +103,8 @@ Las opciones principales son:
 - `MAX_AUTOMATIZACIONES`: 2, 3 o 4 Chromium simultáneos en esa PC.
 - `MAX_TRABAJOS_POR_USUARIO`: solicitudes simultáneas por usuario.
 - `PLAYWRIGHT_HEADLESS=1`: ejecución invisible en servidor.
+- `EVOLUCIONES_PAGINAS_POR_ARCHIVO=5`: cantidad máxima de páginas del sistema
+  seleccionadas para generar cada PDF de evoluciones.
 - `SECRETARIO_SECRET`: clave de sesión obligatoria en producción.
 - `SESSION_COOKIE_SECURE=1`: activar cuando se publique exclusivamente por
   HTTPS.

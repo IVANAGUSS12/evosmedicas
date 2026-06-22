@@ -27,9 +27,12 @@ DATA_DIR = Path(
     os.environ.get("SECRETARIO_DATA_DIR", str(BASE_DIR / "datos"))
 ).expanduser().resolve()
 DESCARGAS_DIR = DATA_DIR / "descargas"
-AUTOMATION_VERSION = "2026-06-19-g"
+AUTOMATION_VERSION = "2026-06-21-a"
 PLAYWRIGHT_SLOW_MO_MS = max(0, int(os.environ.get("PLAYWRIGHT_SLOW_MO_MS", "220")))
 PLAYWRIGHT_TIMEOUT_MS = max(20000, int(os.environ.get("PLAYWRIGHT_TIMEOUT_MS", "35000")))
+EVOLUCIONES_PAGINAS_POR_ARCHIVO = max(
+    1, int(os.environ.get("EVOLUCIONES_PAGINAS_POR_ARCHIVO", "5"))
+)
 PLAYWRIGHT_HEADLESS = os.environ.get(
     "PLAYWRIGHT_HEADLESS", "0"
 ).strip().lower() in {"1", "true", "si", "sí", "yes"}
@@ -866,6 +869,23 @@ def _imprimir_bloque_evoluciones(
     )
 
 
+def _bloques_paginas_evoluciones(primera, ultima):
+    return [
+        (
+            inicio,
+            min(
+                inicio + EVOLUCIONES_PAGINAS_POR_ARCHIVO - 1,
+                ultima,
+            ),
+        )
+        for inicio in range(
+            primera,
+            ultima + 1,
+            EVOLUCIONES_PAGINAS_POR_ARCHIVO,
+        )
+    ]
+
+
 def _evoluciones(page, trabajo, fecha_ingreso, carpeta):
     page.get_by_role(
         "link", name="Evolución y Diagnóstico", exact=True
@@ -903,10 +923,7 @@ def _evoluciones(page, trabajo, fecha_ingreso, carpeta):
     _cerrar_modal_evoluciones(page)
 
     primera, ultima = paginas[0], paginas[-1]
-    bloques = [
-        (inicio, min(inicio + 9, ultima))
-        for inicio in range(primera, ultima + 1, 10)
-    ]
+    bloques = _bloques_paginas_evoluciones(primera, ultima)
     for indice, (pagina_desde, pagina_hasta) in enumerate(
         bloques, start=1
     ):

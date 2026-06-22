@@ -24,6 +24,7 @@ set "PLAYWRIGHT_HEADLESS=0"
 set "PLAYWRIGHT_RECORD_VIDEO=0"
 set "PLAYWRIGHT_SLOW_MO_MS=220"
 set "PLAYWRIGHT_TIMEOUT_MS=35000"
+set "EVOLUCIONES_PAGINAS_POR_ARCHIVO=5"
 
 rem Seguridad
 rem En producción, generar una clave larga y aleatoria.
