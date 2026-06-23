@@ -27,7 +27,7 @@ DATA_DIR = Path(
     os.environ.get("SECRETARIO_DATA_DIR", str(BASE_DIR / "datos"))
 ).expanduser().resolve()
 DESCARGAS_DIR = DATA_DIR / "descargas"
-AUTOMATION_VERSION = "2026-06-21-a"
+AUTOMATION_VERSION = "2026-06-23-a"
 PLAYWRIGHT_SLOW_MO_MS = max(0, int(os.environ.get("PLAYWRIGHT_SLOW_MO_MS", "220")))
 PLAYWRIGHT_TIMEOUT_MS = max(20000, int(os.environ.get("PLAYWRIGHT_TIMEOUT_MS", "35000")))
 EVOLUCIONES_PAGINAS_POR_ARCHIVO = max(
@@ -795,28 +795,84 @@ def _verificar_bloque_evoluciones(
     return total
 
 
+def _pdf_valido(ruta):
+    ruta = Path(ruta)
+    if not ruta.is_file() or ruta.stat().st_size < 100:
+        return False
+    try:
+        with ruta.open("rb") as archivo:
+            if archivo.read(5) != b"%PDF-":
+                return False
+        lector = PdfReader(str(ruta))
+        return len(lector.pages) > 0
+    except Exception:
+        return False
+
+
 def _descargar_pdf_url(page, modal, destino):
+    temporal = destino.with_suffix(destino.suffix + ".part")
+    temporal.unlink(missing_ok=True)
     with page.expect_popup(timeout=180000) as popup_info:
         modal.get_by_role(
             "button", name="Imprimir", exact=True
         ).click()
     popup = popup_info.value
-    popup.wait_for_load_state("domcontentloaded")
-    popup.wait_for_url(re.compile(r"\.pdf(?:$|\?)", re.I), timeout=180000)
-    respuesta = popup.context.request.get(popup.url)
-    if not respuesta.ok:
-        raise RuntimeError(f"El PDF respondió HTTP {respuesta.status}.")
-    destino.write_bytes(respuesta.body())
-    popup.close()
-    if destino.stat().st_size == 0:
-        raise RuntimeError("El PDF generado quedó vacío.")
+    try:
+        popup.wait_for_load_state("domcontentloaded")
+        popup.wait_for_url(
+            re.compile(r"\.pdf(?:$|\?)", re.I),
+            timeout=180000,
+        )
+        respuesta = popup.context.request.get(popup.url)
+        if not respuesta.ok:
+            raise RuntimeError(
+                f"El PDF respondió HTTP {respuesta.status}."
+            )
+        temporal.write_bytes(respuesta.body())
+        if not _pdf_valido(temporal):
+            raise RuntimeError(
+                "El archivo generado no es un PDF válido."
+            )
+        temporal.replace(destino)
+    finally:
+        temporal.unlink(missing_ok=True)
+        try:
+            if not popup.is_closed():
+                popup.close()
+        except Exception:
+            pass
 
 
 def _cerrar_modal_evoluciones(page):
+    if page.is_closed():
+        return False
+    for pagina in list(page.context.pages):
+        if pagina != page:
+            try:
+                pagina.close()
+            except Exception:
+                pass
     modal = page.get_by_label("Imprimir")
     if modal.count() and modal.is_visible():
-        modal.get_by_role("button", name="Volver", exact=True).click()
-        modal.wait_for(state="hidden", timeout=30000)
+        volver = modal.get_by_role(
+            "button", name="Volver", exact=True
+        )
+        try:
+            _esperar_capa_carga(page, timeout=12000)
+            volver.click(timeout=10000)
+        except Exception:
+            try:
+                volver.click(force=True, timeout=5000)
+            except Exception:
+                try:
+                    volver.evaluate("(boton) => boton.click()")
+                except Exception:
+                    return False
+        try:
+            modal.wait_for(state="hidden", timeout=30000)
+        except Exception:
+            return False
+    return True
 
 
 def _imprimir_bloque_evoluciones(
@@ -827,9 +883,16 @@ def _imprimir_bloque_evoluciones(
     hasta,
     destino,
 ):
+    if _pdf_valido(destino):
+        _cerrar_modal_evoluciones(page)
+        return
+    destino.unlink(missing_ok=True)
+
     ultimo = None
     for _ in range(3):
         try:
+            _cerrar_modal_evoluciones(page)
+            _esperar_capa_carga(page, timeout=15000)
             page.get_by_role(
                 "button", name="Imprimir Evoluciones"
             ).click()
@@ -848,10 +911,21 @@ def _imprimir_bloque_evoluciones(
                     f"{seleccionadas}/{verificadas}."
                 )
             _descargar_pdf_url(page, modal, destino)
-            _cerrar_modal_evoluciones(page)
+            # Desde este punto el bloque ya está validado y guardado.
+            # Un fallo al cerrar la interfaz no debe volver a imprimirlo.
+            try:
+                _cerrar_modal_evoluciones(page)
+            except Exception:
+                pass
             return
         except Exception as exc:
             ultimo = exc
+            if _pdf_valido(destino):
+                try:
+                    _cerrar_modal_evoluciones(page)
+                except Exception:
+                    pass
+                return
             for pagina in list(page.context.pages):
                 if pagina != page:
                     try:
@@ -862,7 +936,12 @@ def _imprimir_bloque_evoluciones(
                 _cerrar_modal_evoluciones(page)
             except Exception:
                 pass
-            page.wait_for_timeout(3000)
+            if page.is_closed():
+                break
+            try:
+                page.wait_for_timeout(3000)
+            except Exception:
+                break
     raise RuntimeError(
         f"No se pudo imprimir páginas {pagina_desde}-{pagina_hasta}: "
         f"{ultimo}"

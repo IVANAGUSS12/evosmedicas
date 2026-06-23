@@ -13,6 +13,9 @@ datos/
 _test_tmp_queue/
 _install_check/
 _config_test/
+prueba_*.py
+recorrido_*.py
+diagnostico_*.py
 .pytest_cache/
 .coverage
 htmlcov/
