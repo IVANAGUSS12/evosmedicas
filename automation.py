@@ -27,7 +27,7 @@ DATA_DIR = Path(
     os.environ.get("SECRETARIO_DATA_DIR", str(BASE_DIR / "datos"))
 ).expanduser().resolve()
 DESCARGAS_DIR = DATA_DIR / "descargas"
-AUTOMATION_VERSION = "2026-06-23-a"
+AUTOMATION_VERSION = "2026-06-24-g"
 PLAYWRIGHT_SLOW_MO_MS = max(0, int(os.environ.get("PLAYWRIGHT_SLOW_MO_MS", "220")))
 PLAYWRIGHT_TIMEOUT_MS = max(20000, int(os.environ.get("PLAYWRIGHT_TIMEOUT_MS", "35000")))
 EVOLUCIONES_PAGINAS_POR_ARCHIVO = max(
@@ -670,6 +670,27 @@ def _esperar_ajax(page):
     page.wait_for_timeout(500)
 
 
+class _PopupPdfYaAbierto(RuntimeError):
+    pass
+
+
+def _checkbox_activo(caja):
+    return "ui-state-active" in (caja.get_attribute("class") or "")
+
+
+def _fijar_checkbox(page, caja, activo_objetivo, intentos=4):
+    for _ in range(intentos):
+        if _checkbox_activo(caja) == activo_objetivo:
+            return
+        caja.evaluate("el => el.click()")
+        _esperar_ajax(page)
+        page.wait_for_timeout(150)
+    raise RuntimeError(
+        f"No se pudo {'marcar' if activo_objetivo else 'desmarcar'} "
+        "una casilla de evoluciones."
+    )
+
+
 def _ordenar_evoluciones(page, modal):
     encabezado = modal.get_by_text(
         "Fecha Hora de Carga", exact=False
@@ -741,29 +762,154 @@ def _escanear_evoluciones(page, modal, desde, hasta):
     return relevantes, total
 
 
+def _limpiar_seleccion_evoluciones(page, modal, primera, ultima):
+    page.evaluate(
+        """() => {
+            const tabla = document.getElementById('frmImpresion:tablaEvo_data')
+                || document.querySelector('[id$="tablaEvo_data"]');
+            const selection = document.querySelector(
+                'input[type="hidden"][id$="tablaEvo_selection"], ' +
+                'input[type="hidden"][name$="tablaEvo_selection"]'
+            );
+            const pintar = (fila, seleccionada) => {
+                fila.setAttribute('aria-selected', seleccionada ? 'true' : 'false');
+                fila.classList.toggle('ui-state-highlight', seleccionada);
+                const input = fila.querySelector(
+                    ':scope > td.ui-selection-column input[type="checkbox"]'
+                );
+                const box = fila.querySelector(
+                    ':scope > td.ui-selection-column .ui-chkbox-box'
+                );
+                const icon = fila.querySelector(
+                    ':scope > td.ui-selection-column .ui-chkbox-icon'
+                );
+                if (input) {
+                    input.checked = seleccionada;
+                    input.setAttribute('aria-checked', seleccionada ? 'true' : 'false');
+                }
+                if (box) {
+                    box.classList.toggle('ui-state-active', seleccionada);
+                }
+                if (icon) {
+                    icon.classList.toggle('ui-icon-check', seleccionada);
+                    icon.classList.toggle('ui-icon-blank', !seleccionada);
+                }
+            };
+            const limpiarHeader = () => {
+                document
+                    .querySelectorAll(
+                        '#frmImpresion\\\\:tablaEvo_head .ui-chkbox-box, ' +
+                        'thead .ui-chkbox-box'
+                    )
+                    .forEach((box) => box.classList.remove('ui-state-active'));
+                document
+                    .querySelectorAll(
+                        '#frmImpresion\\\\:tablaEvo_head .ui-chkbox-icon, ' +
+                        'thead .ui-chkbox-icon'
+                    )
+                    .forEach((icon) => {
+                        icon.classList.remove('ui-icon-check');
+                        icon.classList.add('ui-icon-blank');
+                    });
+                document.querySelectorAll('thead input[type="checkbox"]').forEach((input) => {
+                    input.checked = false;
+                    input.setAttribute('aria-checked', 'false');
+                });
+            };
+            if (tabla) {
+                tabla
+                    .querySelectorAll(':scope > tr[data-rk]')
+                    .forEach((fila) => pintar(fila, false));
+            }
+            if (selection) {
+                selection.value = '';
+                selection.dispatchEvent(new Event('change', { bubbles: true }));
+            }
+            limpiarHeader();
+        }"""
+    )
+    _esperar_ajax(page)
+
+
+def _ids_evoluciones_pagina(page, modal, desde, hasta):
+    filas = modal.locator("tbody tr")
+    ids = []
+    for indice in range(filas.count()):
+        fila = filas.nth(indice)
+        fecha = _fecha_evolucion(fila.inner_text())
+        if not fecha or not _evolucion_en_rango(fecha, desde, hasta):
+            continue
+        data_rk = fila.get_attribute("data-rk")
+        if not data_rk:
+            raise RuntimeError("Una fila de evolucion no tiene data-rk.")
+        ids.append(data_rk)
+    return ids
+
+
+def _aplicar_ids_evoluciones(page, ids):
+    page.evaluate(
+        """(ids) => {
+            const seleccion = [...new Set(ids.filter(Boolean))];
+            const tabla = document.getElementById('frmImpresion:tablaEvo_data')
+                || document.querySelector('[id$="tablaEvo_data"]');
+            const selection = document.querySelector(
+                'input[type="hidden"][id$="tablaEvo_selection"], ' +
+                'input[type="hidden"][name$="tablaEvo_selection"]'
+            );
+            const setIds = new Set(seleccion);
+            const pintar = (fila, seleccionada) => {
+                fila.setAttribute('aria-selected', seleccionada ? 'true' : 'false');
+                fila.classList.toggle('ui-state-highlight', seleccionada);
+                const input = fila.querySelector(
+                    ':scope > td.ui-selection-column input[type="checkbox"]'
+                );
+                const box = fila.querySelector(
+                    ':scope > td.ui-selection-column .ui-chkbox-box'
+                );
+                const icon = fila.querySelector(
+                    ':scope > td.ui-selection-column .ui-chkbox-icon'
+                );
+                if (input) {
+                    input.checked = seleccionada;
+                    input.setAttribute('aria-checked', seleccionada ? 'true' : 'false');
+                }
+                if (box) {
+                    box.classList.toggle('ui-state-active', seleccionada);
+                }
+                if (icon) {
+                    icon.classList.toggle('ui-icon-check', seleccionada);
+                    icon.classList.toggle('ui-icon-blank', !seleccionada);
+                }
+            };
+            if (tabla) {
+                tabla.querySelectorAll(':scope > tr[data-rk]').forEach((fila) => {
+                    pintar(fila, setIds.has(fila.getAttribute('data-rk')));
+                });
+            }
+            if (selection) {
+                selection.value = seleccion.join(',');
+                selection.dispatchEvent(new Event('change', { bubbles: true }));
+            }
+        }""",
+        ids,
+    )
+    _esperar_ajax(page)
+
+
 def _seleccionar_bloque_evoluciones(
     page, modal, pagina_desde, pagina_hasta, desde, hasta
 ):
     _ir_pagina_evoluciones(page, modal, pagina_desde)
-    total = 0
+    ids = []
     for numero in range(pagina_desde, pagina_hasta + 1):
-        filas = modal.locator("tbody tr")
-        for indice in range(filas.count()):
-            fila = filas.nth(indice)
-            fecha = _fecha_evolucion(fila.inner_text())
-            if not fecha or not _evolucion_en_rango(fecha, desde, hasta):
-                continue
-            caja = fila.locator(".ui-chkbox-box").first
-            clases = caja.get_attribute("class") or ""
-            if "ui-state-active" not in clases:
-                caja.click()
-            total += 1
+        ids.extend(_ids_evoluciones_pagina(page, modal, desde, hasta))
+        _aplicar_ids_evoluciones(page, ids)
         if numero < pagina_hasta:
             modal.locator(
                 ".ui-paginator-next:not(.ui-state-disabled)"
             ).click()
             _esperar_ajax(page)
-    return total
+    return len(ids)
 
 
 def _verificar_bloque_evoluciones(
@@ -778,11 +924,22 @@ def _verificar_bloque_evoluciones(
             fecha = _fecha_evolucion(fila.inner_text())
             if not fecha or not _evolucion_en_rango(fecha, desde, hasta):
                 continue
-            clases = (
-                fila.locator(".ui-chkbox-box").first.get_attribute("class")
-                or ""
+            data_rk = fila.get_attribute("data-rk")
+            seleccionado = page.evaluate(
+                """(id) => {
+                    const selection = document.querySelector(
+                        'input[type="hidden"][id$="tablaEvo_selection"], ' +
+                        'input[type="hidden"][name$="tablaEvo_selection"]'
+                    );
+                    const valores = selection && selection.value
+                        ? selection.value.split(',').filter(Boolean)
+                        : [];
+                    return valores.includes(id);
+                }""",
+                data_rk,
             )
-            if "ui-state-active" not in clases:
+            clases = fila.locator(".ui-chkbox-box").first.get_attribute("class") or ""
+            if not seleccionado or "ui-state-active" not in clases:
                 raise RuntimeError(
                     f"Se desmarcó la evolución {fecha:%d/%m/%Y %H:%M}."
                 )
@@ -809,14 +966,38 @@ def _pdf_valido(ruta):
         return False
 
 
+def _abrir_popup_pdf_desde_modal(page, modal, intentos=3):
+    ultimo = None
+    for intento in range(intentos):
+        try:
+            _esperar_capa_carga(page, timeout=15000)
+            boton = modal.get_by_role(
+                "button", name="Imprimir", exact=True
+            )
+            boton.wait_for(state="visible", timeout=30000)
+            with page.expect_popup(timeout=60000) as popup_info:
+                boton.click()
+            return popup_info.value
+        except PlaywrightTimeout as exc:
+            ultimo = exc
+            for pagina in list(page.context.pages):
+                if pagina != page:
+                    try:
+                        pagina.close()
+                    except Exception:
+                        pass
+            if intento < intentos - 1:
+                page.wait_for_timeout(2500)
+    raise RuntimeError(
+        "No se abrio el popup del PDF luego de volver a imprimir "
+        f"{intentos} veces: {ultimo}"
+    )
+
+
 def _descargar_pdf_url(page, modal, destino):
     temporal = destino.with_suffix(destino.suffix + ".part")
     temporal.unlink(missing_ok=True)
-    with page.expect_popup(timeout=180000) as popup_info:
-        modal.get_by_role(
-            "button", name="Imprimir", exact=True
-        ).click()
-    popup = popup_info.value
+    popup = _abrir_popup_pdf_desde_modal(page, modal)
     try:
         popup.wait_for_load_state("domcontentloaded")
         popup.wait_for_url(
@@ -834,6 +1015,13 @@ def _descargar_pdf_url(page, modal, destino):
                 "El archivo generado no es un PDF válido."
             )
         temporal.replace(destino)
+    except Exception as exc:
+        if _pdf_valido(destino):
+            return
+        raise _PopupPdfYaAbierto(
+            "El popup del PDF ya se abrio; no se vuelve a presionar Imprimir "
+            f"para este bloque. Error al guardar: {exc}"
+        ) from exc
     finally:
         temporal.unlink(missing_ok=True)
         try:
@@ -875,8 +1063,87 @@ def _cerrar_modal_evoluciones(page):
     return True
 
 
+def _cerrar_impresion_abierta(page):
+    if page.is_closed():
+        return
+    for pagina in list(page.context.pages):
+        if pagina != page:
+            try:
+                pagina.close()
+            except Exception:
+                pass
+    for _ in range(3):
+        modal = page.get_by_label("Imprimir")
+        try:
+            if not (modal.count() and modal.is_visible()):
+                break
+        except Exception:
+            break
+        botones = [
+            modal.get_by_role("button", name="Volver", exact=True),
+            modal.get_by_role("button", name="Cerrar", exact=True),
+        ]
+        cerrado = False
+        for boton in botones:
+            if not boton.count():
+                continue
+            try:
+                boton.first.click(force=True, timeout=5000)
+                modal.wait_for(state="hidden", timeout=10000)
+                cerrado = True
+                break
+            except Exception:
+                try:
+                    boton.first.evaluate("(el) => el.click()")
+                    modal.wait_for(state="hidden", timeout=10000)
+                    cerrado = True
+                    break
+                except Exception:
+                    pass
+        if cerrado:
+            break
+        page.keyboard.press("Escape")
+        page.wait_for_timeout(500)
+    try:
+        page.locator("#LoadingDialog_modal").evaluate_all(
+            "(els) => els.forEach((el) => el.style.display = 'none')"
+        )
+    except Exception:
+        pass
+    try:
+        page.locator("#popupImpresion_modal").evaluate_all(
+            "(els) => els.forEach((el) => el.style.display = 'none')"
+        )
+    except Exception:
+        pass
+    _esperar_capa_carga(page, timeout=3000)
+
+
+def _modal_evoluciones_abierto(page):
+    modal = page.get_by_label("Imprimir")
+    try:
+        if modal.count() and modal.is_visible():
+            return modal
+    except Exception:
+        pass
+    return None
+
+
+def _abrir_modal_evoluciones(page):
+    modal = _modal_evoluciones_abierto(page)
+    if modal is not None:
+        return modal
+    _esperar_capa_carga(page, timeout=15000)
+    page.get_by_role("button", name="Imprimir Evoluciones").click()
+    modal = page.get_by_label("Imprimir")
+    modal.wait_for(state="visible", timeout=60000)
+    return modal
+
+
 def _imprimir_bloque_evoluciones(
     page,
+    primera,
+    ultima,
     pagina_desde,
     pagina_hasta,
     desde,
@@ -891,14 +1158,9 @@ def _imprimir_bloque_evoluciones(
     ultimo = None
     for _ in range(3):
         try:
-            _cerrar_modal_evoluciones(page)
-            _esperar_capa_carga(page, timeout=15000)
-            page.get_by_role(
-                "button", name="Imprimir Evoluciones"
-            ).click()
-            modal = page.get_by_label("Imprimir")
-            modal.wait_for(state="visible", timeout=60000)
+            modal = _abrir_modal_evoluciones(page)
             _ordenar_evoluciones(page, modal)
+            _limpiar_seleccion_evoluciones(page, modal, primera, ultima)
             seleccionadas = _seleccionar_bloque_evoluciones(
                 page, modal, pagina_desde, pagina_hasta, desde, hasta
             )
@@ -913,18 +1175,26 @@ def _imprimir_bloque_evoluciones(
             _descargar_pdf_url(page, modal, destino)
             # Desde este punto el bloque ya está validado y guardado.
             # Un fallo al cerrar la interfaz no debe volver a imprimirlo.
-            try:
-                _cerrar_modal_evoluciones(page)
-            except Exception:
-                pass
+            if not _cerrar_modal_evoluciones(page):
+                modal = _modal_evoluciones_abierto(page)
+                if modal is not None:
+                    _limpiar_seleccion_evoluciones(
+                        page, modal, primera, ultima
+                    )
             return
         except Exception as exc:
             ultimo = exc
+            if isinstance(exc, _PopupPdfYaAbierto):
+                if _pdf_valido(destino):
+                    return
+                raise
             if _pdf_valido(destino):
-                try:
-                    _cerrar_modal_evoluciones(page)
-                except Exception:
-                    pass
+                if not _cerrar_modal_evoluciones(page):
+                    modal = _modal_evoluciones_abierto(page)
+                    if modal is not None:
+                        _limpiar_seleccion_evoluciones(
+                            page, modal, primera, ultima
+                        )
                 return
             for pagina in list(page.context.pages):
                 if pagina != page:
@@ -965,7 +1235,31 @@ def _bloques_paginas_evoluciones(primera, ultima):
     ]
 
 
-def _evoluciones(page, trabajo, fecha_ingreso, carpeta):
+def _bloque_evoluciones_completo(progreso, clave, destino):
+    bloques = progreso.get("evoluciones_bloques", {})
+    return bool(bloques.get(clave, {}).get("completada")) and _pdf_valido(destino)
+
+
+def _completar_bloque_evoluciones(
+    carpeta,
+    progreso,
+    clave,
+    destino,
+    pagina_desde,
+    pagina_hasta,
+):
+    bloques = progreso.setdefault("evoluciones_bloques", {})
+    bloques[clave] = {
+        "completada": True,
+        "fecha": datetime.now().isoformat(timespec="seconds"),
+        "archivo": destino.name,
+        "pagina_desde": pagina_desde,
+        "pagina_hasta": pagina_hasta,
+    }
+    _guardar_progreso(carpeta, progreso)
+
+
+def _evoluciones(page, trabajo, fecha_ingreso, carpeta, progreso):
     page.get_by_role(
         "link", name="Evolución y Diagnóstico", exact=True
     ).click()
@@ -1006,19 +1300,44 @@ def _evoluciones(page, trabajo, fecha_ingreso, carpeta):
     for indice, (pagina_desde, pagina_hasta) in enumerate(
         bloques, start=1
     ):
+        clave = f"{pagina_desde}-{pagina_hasta}"
         nombre = (
             "EVOLUCIONES MEDICAS.pdf"
             if len(bloques) == 1
             else f"EVOLUCIONES MEDICAS {indice:02d}.pdf"
         )
+        destino = carpeta / nombre
+        if _bloque_evoluciones_completo(progreso, clave, destino):
+            continue
+        if _pdf_valido(destino):
+            _completar_bloque_evoluciones(
+                carpeta,
+                progreso,
+                clave,
+                destino,
+                pagina_desde,
+                pagina_hasta,
+            )
+            continue
         _imprimir_bloque_evoluciones(
             page,
+            primera,
+            ultima,
             pagina_desde,
             pagina_hasta,
             desde,
             hasta,
-            carpeta / nombre,
+            destino,
         )
+        _completar_bloque_evoluciones(
+            carpeta,
+            progreso,
+            clave,
+            destino,
+            pagina_desde,
+            pagina_hasta,
+        )
+    _cerrar_impresion_abierta(page)
 
 
 def _epicrisis(page, fecha_ingreso, carpeta):
@@ -1492,7 +1811,7 @@ def ejecutar_trabajo(trabajo, usuario, clave, informar):
                     "EN PROCESO",
                     "Procesando evoluciones médicas...",
                 )
-                _evoluciones(page, trabajo, fecha_ingreso, carpeta)
+                _evoluciones(page, trabajo, fecha_ingreso, carpeta, progreso)
                 _completar_seccion(carpeta, progreso, "evoluciones")
                 informar(
                     "EN PROCESO",
@@ -1503,6 +1822,8 @@ def ejecutar_trabajo(trabajo, usuario, clave, informar):
                     "EN PROCESO",
                     "Evoluciones ya completadas; se omiten.",
                 )
+
+            _cerrar_impresion_abierta(page)
 
             if necesita_epicrisis:
                 informar("EN PROCESO", "Procesando epicrisis...")
