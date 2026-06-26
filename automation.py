@@ -27,7 +27,7 @@ DATA_DIR = Path(
     os.environ.get("SECRETARIO_DATA_DIR", str(BASE_DIR / "datos"))
 ).expanduser().resolve()
 DESCARGAS_DIR = DATA_DIR / "descargas"
-AUTOMATION_VERSION = "2026-06-24-g"
+AUTOMATION_VERSION = "2026-06-26-a"
 PLAYWRIGHT_SLOW_MO_MS = max(0, int(os.environ.get("PLAYWRIGHT_SLOW_MO_MS", "220")))
 PLAYWRIGHT_TIMEOUT_MS = max(20000, int(os.environ.get("PLAYWRIGHT_TIMEOUT_MS", "35000")))
 EVOLUCIONES_PAGINAS_POR_ARCHIVO = max(
@@ -966,26 +966,62 @@ def _pdf_valido(ruta):
         return False
 
 
+def _cerrar_paginas_secundarias(page):
+    for pagina in list(page.context.pages):
+        if pagina != page:
+            try:
+                pagina.close()
+            except Exception:
+                pass
+
+
+def _buscar_pagina_secundaria(page, conocidas=None, timeout=10000):
+    conocidas = conocidas or set()
+    fin = time.monotonic() + timeout / 1000
+    while time.monotonic() < fin:
+        candidatas = []
+        for pagina in list(page.context.pages):
+            try:
+                if pagina == page or pagina.is_closed():
+                    continue
+            except Exception:
+                continue
+            candidatas.append(pagina)
+            if id(pagina) not in conocidas:
+                return pagina
+
+        for pagina in candidatas:
+            try:
+                if re.search(r"\.pdf(?:$|\?)", pagina.url, re.I):
+                    return pagina
+            except Exception:
+                pass
+        page.wait_for_timeout(250)
+    return None
+
+
 def _abrir_popup_pdf_desde_modal(page, modal, intentos=3):
     ultimo = None
     for intento in range(intentos):
         try:
+            _cerrar_paginas_secundarias(page)
             _esperar_capa_carga(page, timeout=15000)
             boton = modal.get_by_role(
                 "button", name="Imprimir", exact=True
             )
             boton.wait_for(state="visible", timeout=30000)
+            paginas_antes = {id(pagina) for pagina in page.context.pages}
             with page.expect_popup(timeout=60000) as popup_info:
                 boton.click()
             return popup_info.value
         except PlaywrightTimeout as exc:
             ultimo = exc
-            for pagina in list(page.context.pages):
-                if pagina != page:
-                    try:
-                        pagina.close()
-                    except Exception:
-                        pass
+            popup = _buscar_pagina_secundaria(
+                page, paginas_antes, timeout=15000
+            )
+            if popup is not None:
+                return popup
+            _cerrar_paginas_secundarias(page)
             if intento < intentos - 1:
                 page.wait_for_timeout(2500)
     raise RuntimeError(
@@ -1532,11 +1568,39 @@ def _arrastrar_timeline_hacia_evento(page, evento, superficies):
     return False
 
 
-def _abrir_evento_internacion(page, fecha_evento):
-    patron = re.compile(
-        rf"{fecha_evento:%d/%m/%y}\s*-\s*INTERNACION", re.I
+def _localizar_evento_atencion(page, fecha_evento):
+    patrones = [
+        re.compile(rf"{fecha_evento:%d/%m/%y}\s*-\s*\S+", re.I),
+        re.compile(rf"{fecha_evento:%d/%m/%Y}\s*-\s*\S+", re.I),
+    ]
+    selectores = [
+        ".vis-item",
+        ".vis-item-content",
+        "[class*='timeline'] [class*='item']",
+        "[class*='Timeline'] [class*='item']",
+    ]
+    for patron in patrones:
+        for selector in selectores:
+            candidato = page.locator(selector).filter(has_text=patron).first
+            try:
+                if candidato.count():
+                    return candidato
+            except Exception:
+                pass
+        candidato = page.get_by_text(patron).first
+        try:
+            if candidato.count():
+                return candidato
+        except Exception:
+            pass
+    raise RuntimeError(
+        "No pude encontrar en la linea temporal un evento para "
+        f"{fecha_evento:%d/%m/%Y}."
     )
-    evento = page.get_by_text(patron).first
+
+
+def _abrir_evento_internacion(page, fecha_evento):
+    evento = _localizar_evento_atencion(page, fecha_evento)
     evento.wait_for(state="attached", timeout=30000)
     superficies = _superficies_arrastre_timeline(page)
     if not superficies:
@@ -1610,7 +1674,12 @@ def _indicaciones(page, trabajo, fecha_ingreso, carpeta):
             "button", name="Resumen HC"
         ).wait_for(state="visible", timeout=60000)
     _abrir_evento_internacion(page, fecha_evento)
-    page.get_by_role("button", name="Imprimir Evento Atención").click()
+    imprimir = page.get_by_role(
+        "button", name="Imprimir Evento Atención"
+    )
+    if not imprimir.count():
+        imprimir = page.get_by_role("button", name="Imprimir", exact=True)
+    imprimir.click()
     formulario = page.locator("#frmImpresionEstudios")
     formulario.wait_for(state="visible", timeout=60000)
     modal = formulario.locator(
@@ -1638,11 +1707,22 @@ def _indicaciones(page, trabajo, fecha_ingreso, carpeta):
         )
 
     temporal = carpeta / "_indicaciones_completo.pdf"
-    with page.expect_popup(timeout=180000) as popup_info:
-        modal.get_by_role(
-            "button", name="Aceptar", exact=True
-        ).click()
-    popup = popup_info.value
+    _cerrar_paginas_secundarias(page)
+    paginas_antes = {id(pagina) for pagina in page.context.pages}
+    try:
+        with page.expect_popup(timeout=180000) as popup_info:
+            modal.get_by_role(
+                "button", name="Aceptar", exact=True
+            ).click()
+        popup = popup_info.value
+    except PlaywrightTimeout as exc:
+        popup = _buscar_pagina_secundaria(
+            page, paginas_antes, timeout=15000
+        )
+        if popup is None:
+            raise RuntimeError(
+                "No se abrio el popup del PDF de indicaciones."
+            ) from exc
     popup.wait_for_load_state("domcontentloaded")
     popup.wait_for_url(
         re.compile(r"\.pdf(?:$|\?)", re.I), timeout=180000
