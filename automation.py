@@ -27,7 +27,7 @@ DATA_DIR = Path(
     os.environ.get("SECRETARIO_DATA_DIR", str(BASE_DIR / "datos"))
 ).expanduser().resolve()
 DESCARGAS_DIR = DATA_DIR / "descargas"
-AUTOMATION_VERSION = "2026-06-26-a"
+AUTOMATION_VERSION = "2026-06-29-c"
 PLAYWRIGHT_SLOW_MO_MS = max(0, int(os.environ.get("PLAYWRIGHT_SLOW_MO_MS", "220")))
 PLAYWRIGHT_TIMEOUT_MS = max(20000, int(os.environ.get("PLAYWRIGHT_TIMEOUT_MS", "35000")))
 EVOLUCIONES_PAGINAS_POR_ARCHIVO = max(
@@ -966,6 +966,71 @@ def _pdf_valido(ruta):
         return False
 
 
+def _pdfs_en_carpeta(carpeta):
+    if not carpeta.is_dir():
+        return set()
+    return {
+        archivo.resolve()
+        for archivo in carpeta.glob("*.pdf")
+        if archivo.is_file()
+    } | {
+        archivo.resolve()
+        for archivo in carpeta.glob("*.PDF")
+        if archivo.is_file()
+    }
+
+
+def _adoptar_pdf_descargado(carpeta, destino, conocidos, desde_ts, timeout=15000):
+    fin = time.monotonic() + timeout / 1000
+    destino = Path(destino)
+    carpeta = Path(carpeta)
+    while time.monotonic() < fin:
+        candidatos = []
+        for archivo in _pdfs_en_carpeta(carpeta):
+            if archivo == destino.resolve() or archivo in conocidos:
+                continue
+            try:
+                if archivo.stat().st_mtime < desde_ts:
+                    continue
+            except OSError:
+                continue
+            candidatos.append(archivo)
+
+        candidatos.sort(
+            key=lambda archivo: archivo.stat().st_mtime,
+            reverse=True,
+        )
+        for archivo in candidatos:
+            if not _pdf_valido(archivo):
+                continue
+            archivo.replace(destino)
+            return True
+        time.sleep(0.5)
+    return _pdf_valido(destino)
+
+
+def _limpiar_pdfs_descargados(carpeta, destino, conocidos, desde_ts, timeout=3000):
+    fin = time.monotonic() + timeout / 1000
+    destino = Path(destino).resolve()
+    carpeta = Path(carpeta)
+    while time.monotonic() < fin:
+        removidos = False
+        for archivo in _pdfs_en_carpeta(carpeta):
+            if archivo == destino or archivo in conocidos:
+                continue
+            try:
+                if archivo.stat().st_mtime < desde_ts:
+                    continue
+                if _pdf_valido(archivo):
+                    archivo.unlink()
+                    removidos = True
+            except OSError:
+                continue
+        if removidos:
+            return
+        time.sleep(0.5)
+
+
 def _cerrar_paginas_secundarias(page):
     for pagina in list(page.context.pages):
         if pagina != page:
@@ -1030,17 +1095,35 @@ def _abrir_popup_pdf_desde_modal(page, modal, intentos=3):
     )
 
 
+def _esperar_url_pdf(pagina, timeout=180000):
+    patron = re.compile(r"\.pdf(?:$|\?)", re.I)
+    fin = time.monotonic() + timeout / 1000
+    ultimo = None
+    while time.monotonic() < fin:
+        try:
+            url = pagina.url
+            if patron.search(url):
+                return url
+            pagina.wait_for_url(patron, timeout=3000)
+            return pagina.url
+        except PlaywrightTimeout as exc:
+            ultimo = exc
+        except Exception as exc:
+            ultimo = exc
+            break
+    raise RuntimeError(f"No se detecto la URL del PDF abierto: {ultimo}")
+
+
 def _descargar_pdf_url(page, modal, destino):
     temporal = destino.with_suffix(destino.suffix + ".part")
     temporal.unlink(missing_ok=True)
+    carpeta = destino.parent
+    conocidos = _pdfs_en_carpeta(carpeta)
+    desde_ts = time.time() - 2
     popup = _abrir_popup_pdf_desde_modal(page, modal)
     try:
-        popup.wait_for_load_state("domcontentloaded")
-        popup.wait_for_url(
-            re.compile(r"\.pdf(?:$|\?)", re.I),
-            timeout=180000,
-        )
-        respuesta = popup.context.request.get(popup.url)
+        pdf_url = _esperar_url_pdf(popup)
+        respuesta = popup.context.request.get(pdf_url)
         if not respuesta.ok:
             raise RuntimeError(
                 f"El PDF respondió HTTP {respuesta.status}."
@@ -1051,8 +1134,14 @@ def _descargar_pdf_url(page, modal, destino):
                 "El archivo generado no es un PDF válido."
             )
         temporal.replace(destino)
+        _limpiar_pdfs_descargados(carpeta, destino, conocidos, desde_ts)
     except Exception as exc:
+        if _adoptar_pdf_descargado(
+            carpeta, destino, conocidos, desde_ts, timeout=15000
+        ):
+            return
         if _pdf_valido(destino):
+            _limpiar_pdfs_descargados(carpeta, destino, conocidos, desde_ts)
             return
         raise _PopupPdfYaAbierto(
             "El popup del PDF ya se abrio; no se vuelve a presionar Imprimir "
@@ -1185,9 +1274,12 @@ def _imprimir_bloque_evoluciones(
     desde,
     hasta,
     destino,
+    al_guardar=None,
 ):
     if _pdf_valido(destino):
-        _cerrar_modal_evoluciones(page)
+        if al_guardar is not None:
+            al_guardar()
+        _cerrar_paginas_secundarias(page)
         return
     destino.unlink(missing_ok=True)
 
@@ -1209,28 +1301,24 @@ def _imprimir_bloque_evoluciones(
                     f"{seleccionadas}/{verificadas}."
                 )
             _descargar_pdf_url(page, modal, destino)
+            if _pdf_valido(destino) and al_guardar is not None:
+                al_guardar()
             # Desde este punto el bloque ya está validado y guardado.
             # Un fallo al cerrar la interfaz no debe volver a imprimirlo.
-            if not _cerrar_modal_evoluciones(page):
-                modal = _modal_evoluciones_abierto(page)
-                if modal is not None:
-                    _limpiar_seleccion_evoluciones(
-                        page, modal, primera, ultima
-                    )
+            _cerrar_paginas_secundarias(page)
             return
         except Exception as exc:
             ultimo = exc
             if isinstance(exc, _PopupPdfYaAbierto):
                 if _pdf_valido(destino):
+                    if al_guardar is not None:
+                        al_guardar()
                     return
                 raise
             if _pdf_valido(destino):
-                if not _cerrar_modal_evoluciones(page):
-                    modal = _modal_evoluciones_abierto(page)
-                    if modal is not None:
-                        _limpiar_seleccion_evoluciones(
-                            page, modal, primera, ultima
-                        )
+                if al_guardar is not None:
+                    al_guardar()
+                _cerrar_paginas_secundarias(page)
                 return
             for pagina in list(page.context.pages):
                 if pagina != page:
@@ -1355,6 +1443,16 @@ def _evoluciones(page, trabajo, fecha_ingreso, carpeta, progreso):
                 pagina_hasta,
             )
             continue
+        def marcar_guardado():
+            _completar_bloque_evoluciones(
+                carpeta,
+                progreso,
+                clave,
+                destino,
+                pagina_desde,
+                pagina_hasta,
+            )
+
         _imprimir_bloque_evoluciones(
             page,
             primera,
@@ -1364,15 +1462,17 @@ def _evoluciones(page, trabajo, fecha_ingreso, carpeta, progreso):
             desde,
             hasta,
             destino,
+            al_guardar=marcar_guardado,
         )
-        _completar_bloque_evoluciones(
-            carpeta,
-            progreso,
-            clave,
-            destino,
-            pagina_desde,
-            pagina_hasta,
-        )
+        if not _bloque_evoluciones_completo(progreso, clave, destino):
+            _completar_bloque_evoluciones(
+                carpeta,
+                progreso,
+                clave,
+                destino,
+                pagina_desde,
+                pagina_hasta,
+            )
     _cerrar_impresion_abierta(page)
 
 
@@ -1759,6 +1859,7 @@ def ejecutar_trabajo(trabajo, usuario, clave, informar):
         browser = p.chromium.launch(
             headless=PLAYWRIGHT_HEADLESS,
             slow_mo=PLAYWRIGHT_SLOW_MO_MS,
+            downloads_path=str(carpeta),
         )
         opciones_contexto = dict(
             accept_downloads=True,
