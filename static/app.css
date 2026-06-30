@@ -116,7 +116,8 @@ label {
   font-weight: 600;
 }
 
-input:not([type="hidden"]) {
+input:not([type="hidden"]),
+select {
   display: block;
   width: 100%;
   padding: 11px;

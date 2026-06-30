@@ -27,7 +27,7 @@ DATA_DIR = Path(
     os.environ.get("SECRETARIO_DATA_DIR", str(BASE_DIR / "datos"))
 ).expanduser().resolve()
 DESCARGAS_DIR = DATA_DIR / "descargas"
-AUTOMATION_VERSION = "2026-06-29-c"
+AUTOMATION_VERSION = "2026-06-29-g"
 PLAYWRIGHT_SLOW_MO_MS = max(0, int(os.environ.get("PLAYWRIGHT_SLOW_MO_MS", "220")))
 PLAYWRIGHT_TIMEOUT_MS = max(20000, int(os.environ.get("PLAYWRIGHT_TIMEOUT_MS", "35000")))
 EVOLUCIONES_PAGINAS_POR_ARCHIVO = max(
@@ -39,6 +39,14 @@ PLAYWRIGHT_HEADLESS = os.environ.get(
 PLAYWRIGHT_RECORD_VIDEO = os.environ.get(
     "PLAYWRIGHT_RECORD_VIDEO", "0"
 ).strip().lower() in {"1", "true", "si", "sí", "yes"}
+CENTROS_ATENCION = {"SAAVEDRA", "POMBO"}
+
+
+def _centro_atencion(trabajo):
+    centro = (trabajo.get("centro_atencion") or "SAAVEDRA").strip().upper()
+    if centro not in CENTROS_ATENCION:
+        raise RuntimeError(f"Centro de atención no soportado: {centro}")
+    return centro
 
 
 def _captura_debug(page, carpeta, nombre):
@@ -404,13 +412,14 @@ def _login(page, usuario, clave):
     page.get_by_role("link", name="ADMISION INTERNADOS").wait_for(timeout=30000)
 
 
-def _entrar_modulo(page, nombre):
+def _entrar_modulo(page, nombre, trabajo=None):
     url_actual = (page.url or "").lower()
     if nombre == "ADMISION INTERNADOS" and "admisioninternados/" in url_actual:
         return
     if nombre == "INTERNACION" and "/internacion/" in url_actual:
         return
 
+    centro = _centro_atencion(trabajo or {})
     ultimo = None
     for _ in range(2):
         try:
@@ -418,7 +427,7 @@ def _entrar_modulo(page, nombre):
             combo = page.locator('[id="formInicio:comboCentroAtencion_label"]')
             if combo.count() and combo.first.is_visible():
                 combo.click()
-                page.get_by_role("option", name="SAAVEDRA", exact=True).click()
+                page.get_by_role("option", name=centro, exact=True).click()
                 page.get_by_role("button", name="Aceptar", exact=True).click()
             _esperar_capa_carga(page, timeout=90000)
             return
@@ -444,7 +453,7 @@ def _ir_a_pacientes_internados(page):
 
 
 def _buscar_admision(page, trabajo):
-    _entrar_modulo(page, "ADMISION INTERNADOS")
+    _entrar_modulo(page, "ADMISION INTERNADOS", trabajo)
     _ir_a_pacientes_internados(page)
     _seleccionar_estado(page, "TODAS")
     campo = page.locator('[id="formSelectInternacion:j_idt227"]')
@@ -606,7 +615,7 @@ def _buscar_internacion(page, trabajo):
         _esperar_capa_carga(page)
     except Exception:
         pass
-    _entrar_modulo(page, "INTERNACION")
+    _entrar_modulo(page, "INTERNACION", trabajo)
     _click_link_con_reintento(page, re.compile(r"^Internaci[oó]n\s", re.I))
     opcion_internacion = page.get_by_role(
         "link", name=re.compile(r"^Internaci[oó]n$", re.I)
@@ -1476,7 +1485,7 @@ def _evoluciones(page, trabajo, fecha_ingreso, carpeta, progreso):
     _cerrar_impresion_abierta(page)
 
 
-def _epicrisis(page, fecha_ingreso, carpeta):
+def _epicrisis(page, trabajo, fecha_ingreso, carpeta):
     page.get_by_role("button", name="Historia Clínica").click()
     page.get_by_role("button", name="Resumen HC").click()
     _esperar_ajax(page)
@@ -1492,15 +1501,60 @@ def _epicrisis(page, fecha_ingreso, carpeta):
     patron = re.compile(
         rf"{fecha:%d/%m}/(?:{fecha:%y}|{fecha:%Y})"
     )
-    filas = page.locator("tr").filter(has_text=patron)
+    centro = _centro_atencion(trabajo)
+    filas = page.locator("tr:visible").filter(has_text=patron)
     candidatos = []
+    filas_vistas = set()
     for indice in range(filas.count()):
         fila = filas.nth(indice)
+        if not fila.is_visible():
+            continue
+        texto_fila = re.sub(r"\s+", " ", fila.inner_text()).strip()
+        if not texto_fila:
+            continue
+        clave_fila = texto_fila.casefold()
+        if clave_fila in filas_vistas:
+            continue
         boton = fila.get_by_role(
             "button", name=re.compile("Epicrisis", re.I)
         )
-        if boton.count():
-            candidatos.append(boton.first)
+        if not boton.count():
+            continue
+        boton_visible = boton.first
+        if not boton_visible.is_visible():
+            continue
+        filas_vistas.add(clave_fila)
+        candidatos.append(
+            {
+                "boton": boton_visible,
+                "texto": texto_fila,
+            }
+        )
+    if len(candidatos) > 1:
+        internados_centro = [
+            candidato
+            for candidato in candidatos
+            if re.search(r"\bINTERNADO\b", candidato["texto"], re.I)
+            and re.search(rf"\b{re.escape(centro)}\b", candidato["texto"], re.I)
+        ]
+        if len(internados_centro) == 1:
+            candidatos = internados_centro
+    if len(candidatos) > 1:
+        mismo_centro = [
+            candidato
+            for candidato in candidatos
+            if re.search(rf"\b{re.escape(centro)}\b", candidato["texto"], re.I)
+        ]
+        if len(mismo_centro) == 1:
+            candidatos = mismo_centro
+    if len(candidatos) > 1:
+        internados = [
+            candidato
+            for candidato in candidatos
+            if re.search(r"\bINTERNADO\b", candidato["texto"], re.I)
+        ]
+        if len(internados) == 1:
+            candidatos = internados
     if len(candidatos) != 1:
         raise RuntimeError(
             f"Se encontraron {len(candidatos)} epicrisis para "
@@ -1508,7 +1562,7 @@ def _epicrisis(page, fecha_ingreso, carpeta):
         )
     destino = carpeta / "EPICRISIS.pdf"
     with page.expect_popup(timeout=120000) as popup_info:
-        candidatos[0].click()
+        candidatos[0]["boton"].click()
     popup = popup_info.value
     popup.wait_for_load_state("domcontentloaded")
     popup.wait_for_url(re.compile(r"\.pdf(?:$|\?)", re.I), timeout=120000)
@@ -1699,8 +1753,58 @@ def _localizar_evento_atencion(page, fecha_evento):
     )
 
 
+def _campo_fecha_timeline(page, etiqueta):
+    label = page.get_by_text(etiqueta, exact=True)
+    label.wait_for(state="visible", timeout=20000)
+    campo = label.locator("xpath=following::input[not(@type='hidden')][1]")
+    campo.wait_for(state="visible", timeout=20000)
+    return campo
+
+
+def _seleccionar_busqueda_cronologica(page):
+    etiqueta = page.get_by_text("Tipo Búsqueda:", exact=True)
+    etiqueta.wait_for(state="visible", timeout=20000)
+    contenedor = etiqueta.locator("xpath=..")
+    combo = contenedor.locator(".ui-selectonemenu").first
+    if combo.count():
+        valor = combo.locator(".ui-selectonemenu-label").inner_text().strip()
+        if valor.casefold() != "cronologica":
+            combo.locator(".ui-selectonemenu-trigger").click()
+            page.get_by_role("option", name="CRONOLOGICA", exact=True).click()
+            _esperar_ajax(page)
+        return
+    select = etiqueta.locator("xpath=following::select[1]")
+    if select.count():
+        select.select_option(label="CRONOLOGICA")
+        _esperar_ajax(page)
+
+
+def _filtrar_timeline_por_fecha(page, fecha_evento):
+    fecha = f"{fecha_evento:%d/%m/%y}"
+    _seleccionar_busqueda_cronologica(page)
+    for etiqueta in ("Fecha Desde:", "Fecha Hasta:"):
+        campo = _campo_fecha_timeline(page, etiqueta)
+        campo.fill(fecha)
+        if campo.input_value().strip() != fecha:
+            campo.evaluate(
+                """(el, value) => {
+                    el.value = value;
+                    el.dispatchEvent(new Event('input', {bubbles: true}));
+                    el.dispatchEvent(new Event('change', {bubbles: true}));
+                }""",
+                fecha,
+            )
+    page.get_by_role("button", name=re.compile(r"Consultar", re.I)).click()
+    _esperar_ajax(page)
+    page.wait_for_timeout(1200)
+
+
 def _abrir_evento_internacion(page, fecha_evento):
-    evento = _localizar_evento_atencion(page, fecha_evento)
+    try:
+        evento = _localizar_evento_atencion(page, fecha_evento)
+    except RuntimeError:
+        _filtrar_timeline_por_fecha(page, fecha_evento)
+        evento = _localizar_evento_atencion(page, fecha_evento)
     evento.wait_for(state="attached", timeout=30000)
     superficies = _superficies_arrastre_timeline(page)
     if not superficies:
@@ -2008,7 +2112,7 @@ def ejecutar_trabajo(trabajo, usuario, clave, informar):
 
             if necesita_epicrisis:
                 informar("EN PROCESO", "Procesando epicrisis...")
-                _epicrisis(page, fecha_ingreso, carpeta)
+                _epicrisis(page, trabajo, fecha_ingreso, carpeta)
                 _completar_seccion(carpeta, progreso, "epicrisis")
                 informar("EN PROCESO", "Epicrisis descargada.")
             else:

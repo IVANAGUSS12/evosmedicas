@@ -79,6 +79,7 @@ MAX_AUTOMATIZACIONES = max(
 MAX_TRABAJOS_POR_USUARIO = max(
     1, int(os.environ.get("MAX_TRABAJOS_POR_USUARIO", "10"))
 )
+CENTROS_ATENCION = ("SAAVEDRA", "POMBO")
 COLA_TRABAJOS = queue.Queue()
 _CONSUMIDORES_INICIADOS = False
 _CONSUMIDORES_LOCK = threading.Lock()
@@ -151,6 +152,7 @@ def init_db():
             CREATE TABLE IF NOT EXISTS trabajos (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 usuario_id INTEGER NOT NULL,
+                centro_atencion TEXT NOT NULL DEFAULT 'SAAVEDRA',
                 internacion TEXT NOT NULL,
                 dni TEXT NOT NULL,
                 estado_paciente TEXT NOT NULL,
@@ -171,6 +173,7 @@ def init_db():
 
         # Migra instalaciones antiguas con esquemas incompletos.
         _asegurar_columna(con, "usuarios", "administrador", "INTEGER NOT NULL DEFAULT 0")
+        _asegurar_columna(con, "trabajos", "centro_atencion", "TEXT NOT NULL DEFAULT 'SAAVEDRA'")
         _asegurar_columna(con, "trabajos", "estado", "TEXT NOT NULL DEFAULT 'PENDIENTE'")
         _asegurar_columna(con, "trabajos", "mensaje", "TEXT NOT NULL DEFAULT ''")
         _asegurar_columna(con, "trabajos", "progreso", "INTEGER NOT NULL DEFAULT 0")
@@ -285,14 +288,19 @@ def inicio():
         "inicio.html",
         trabajos=trabajos,
         max_automatizaciones=MAX_AUTOMATIZACIONES,
+        centros_atencion=CENTROS_ATENCION,
     )
 
 
 @app.post("/trabajos")
 @login_requerido
 def crear_trabajo():
+    centro_atencion = request.form.get("centro_atencion", "SAAVEDRA").strip().upper()
     internacion = request.form["internacion"].strip()
     dni = request.form["dni"].strip()
+    if centro_atencion not in CENTROS_ATENCION:
+        flash("El centro de atención seleccionado no es válido.")
+        return redirect(url_for("inicio"))
     if not re.fullmatch(r"\d{4,20}", internacion):
         flash("El número de internación debe contener solo dígitos.")
         return redirect(url_for("inicio"))
@@ -314,11 +322,12 @@ def crear_trabajo():
     with db() as con:
         cur = con.execute(
             """INSERT INTO trabajos
-               (usuario_id, internacion, dni, estado_paciente, rango_tipo,
+               (usuario_id, centro_atencion, internacion, dni, estado_paciente, rango_tipo,
                 fecha_desde, fecha_hasta, creado, actualizado)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 session["usuario_id"],
+                centro_atencion,
                 internacion,
                 dni,
                 request.form["estado_paciente"],

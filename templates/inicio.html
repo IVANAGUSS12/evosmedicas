@@ -10,6 +10,7 @@
 <section class="card">
   <form method="post" action="{{ url_for('crear_trabajo') }}" class="grid">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <label>Centro de atención<select name="centro_atencion" required>{% for centro in centros_atencion %}<option value="{{ centro }}">{{ centro }}</option>{% endfor %}</select></label>
     <label>Nº de internación<input name="internacion" required inputmode="numeric"></label>
     <label>DNI<input name="dni" required inputmode="numeric"></label>
     <fieldset><legend>Estado del paciente</legend><label class="radio"><input type="radio" name="estado_paciente" value="ACTIVO" checked> Actualmente internado (ACTIVAS)</label><label class="radio"><input type="radio" name="estado_paciente" value="ALTA"> Tiene alta (TODAS)</label></fieldset>
@@ -25,6 +26,7 @@
     <article class="job card" data-trabajo-id="{{ t.id }}" data-estado="{{ t.estado }}">
       <div>
         <strong>Internación {{ t.internacion }}</strong>
+        <span>Centro {{ t.centro_atencion or "SAAVEDRA" }}</span>
         <span>DNI {{ t.dni }} · {{ "ACTIVAS" if t.estado_paciente == "ACTIVO" else "TODAS" }}</span>
         <span>{% if t.rango_tipo == "RANGO" %}{{ t.fecha_desde }} al {{ t.fecha_hasta }}{% else %}Toda la internación{% endif %}</span>
         <span class="job-message">{{ t.mensaje }}</span>
