@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block contenido %}
+<section class="card">
+  <h1>Usuarios</h1>
+  <form method="post" class="inline">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <input name="usuario" placeholder="Nuevo usuario" required>
+    <input name="clave" type="password" placeholder="Contraseña inicial" required>
+    <button>Crear usuario</button>
+  </form>
+  <ul>{% for u in usuarios %}<li>{{ u.usuario }}{% if u.administrador %} · Administrador{% endif %}</li>{% endfor %}</ul>
+</section>
+{% endblock %}

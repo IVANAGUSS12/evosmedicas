@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block contenido %}
+<section class="folder-head">
+  <div>
+    <p class="eyebrow">DOCUMENTACIÓN DEL PACIENTE</p>
+    <h1>Internación {{ trabajo.internacion }}</h1>
+    <p>DNI {{ trabajo.dni }} · {{ archivos|length }} archivo(s)</p>
+  </div>
+  <div class="folder-actions">
+    <a class="button secondary" href="{{ url_for('inicio') }}">Volver</a>
+    {% if archivos %}
+      <a class="button secondary" target="_blank" href="{{ url_for('imprimir_trabajo', trabajo_id=trabajo.id) }}">Imprimir todo</a>
+      <a class="button" href="{{ url_for('descargar_trabajo', trabajo_id=trabajo.id) }}">Descargar todo</a>
+    {% endif %}
+  </div>
+</section>
+
+{% if archivos %}
+<section class="file-list">
+  {% for archivo in archivos %}
+  <article class="file card">
+    <div class="file-icon">PDF</div>
+    <div>
+      <strong>{{ archivo.nombre }}</strong>
+      <span>{{ "%.1f"|format(archivo.bytes / 1024) }} KB</span>
+    </div>
+    <div class="file-actions">
+      <a class="button secondary" target="_blank" href="{{ url_for('ver_archivo', trabajo_id=trabajo.id, nombre=archivo.nombre) }}">Abrir</a>
+      <a class="button secondary" href="{{ url_for('descargar_archivo', trabajo_id=trabajo.id, nombre=archivo.nombre) }}">Descargar</a>
+      <a class="button" target="_blank" href="{{ url_for('imprimir_archivo', trabajo_id=trabajo.id, nombre=archivo.nombre) }}">Imprimir</a>
+    </div>
+  </article>
+  {% endfor %}
+</section>
+{% else %}
+<section class="card empty">Todavía no hay documentos disponibles para esta solicitud.</section>
+{% endif %}
+{% endblock %}

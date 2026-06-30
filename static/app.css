@@ -1,0 +1,424 @@
+:root {
+  font-family: "Segoe UI", Arial, sans-serif;
+  color: #173c43;
+  background: #eef4f3;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+}
+
+header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 18px 5vw;
+  color: #fff;
+  background: #174f58;
+}
+
+header strong {
+  font-size: 20px;
+  letter-spacing: 0.06em;
+}
+
+header span {
+  display: block;
+  margin-top: 3px;
+  font-size: 12px;
+  opacity: 0.72;
+}
+
+nav {
+  display: flex;
+  gap: 20px;
+  align-items: center;
+}
+
+nav span {
+  margin: 0;
+  font-size: 14px;
+}
+
+.logout-form {
+  margin: 0;
+}
+
+.link-button {
+  padding: 0;
+  font: inherit;
+  font-weight: 400;
+  text-decoration: underline;
+  background: transparent;
+  border-radius: 0;
+}
+
+a {
+  color: inherit;
+}
+
+main {
+  max-width: 1180px;
+  margin: 32px auto;
+  padding: 0 22px;
+}
+
+.hero {
+  padding: 34px;
+  margin-bottom: 20px;
+  color: #fff;
+  background: linear-gradient(120deg, #0f6d73, #2aa9a7);
+  border-radius: 18px;
+}
+
+.hero h1 {
+  margin: 4px 0;
+  font-size: 34px;
+}
+
+.eyebrow {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.15em;
+}
+
+.card {
+  padding: 24px;
+  background: #fff;
+  border: 1px solid #d6e2e0;
+  border-radius: 14px;
+  box-shadow: 0 8px 24px #164f5810;
+}
+
+.login {
+  max-width: 430px;
+  margin: 9vh auto;
+}
+
+.login form {
+  display: grid;
+  gap: 16px;
+  margin: 25px 0;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px;
+}
+
+label {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+input:not([type="hidden"]),
+select {
+  display: block;
+  width: 100%;
+  padding: 11px;
+  margin-top: 7px;
+  font: inherit;
+  border: 1px solid #b8ceca;
+  border-radius: 8px;
+}
+
+fieldset {
+  padding: 15px;
+  border: 1px solid #d6e2e0;
+  border-radius: 10px;
+}
+
+legend {
+  font-weight: 700;
+}
+
+.radio {
+  display: block;
+  margin: 8px 0;
+  font-weight: 400;
+}
+
+.radio input {
+  display: inline;
+  width: auto;
+  margin-right: 7px;
+}
+
+.dates,
+.inline,
+.patient-files,
+.folder-actions {
+  display: flex;
+  gap: 10px;
+}
+
+.dates input,
+.inline input {
+  margin-top: 0;
+}
+
+button,
+.button {
+  display: inline-block;
+  padding: 11px 18px;
+  font-weight: 700;
+  color: #fff;
+  text-decoration: none;
+  cursor: pointer;
+  background: #169a9d;
+  border: 0;
+  border-radius: 8px;
+}
+
+.button.secondary {
+  color: #187b80;
+  background: #fff;
+  border: 1px solid #9bc7c5;
+}
+
+.span {
+  grid-column: 1 / -1;
+}
+
+.flash {
+  padding: 13px;
+  margin-bottom: 18px;
+  background: #d7f3ed;
+  border-left: 5px solid #169a9d;
+}
+
+.jobs,
+.file-list {
+  display: grid;
+  gap: 12px;
+}
+
+.job {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 12px;
+  align-items: start;
+}
+
+.job span,
+.file span {
+  display: block;
+  margin-top: 5px;
+  color: #637a7d;
+}
+
+.credentials {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: 1fr 1fr auto;
+  gap: 10px;
+}
+
+.patient-files {
+  grid-column: 1 / -1;
+  flex-wrap: wrap;
+}
+
+.status {
+  padding: 7px 10px;
+  font-size: 12px;
+  background: #e5eceb;
+  border-radius: 20px;
+}
+
+.status.completado {
+  color: #14633a;
+  background: #cff2df;
+}
+
+.status.error {
+  color: #9b2f28;
+  background: #ffe0dd;
+}
+
+.status.en-proceso {
+  color: #225b96;
+  background: #d9ebff;
+}
+
+.status.en-cola {
+  color: #775400;
+  background: #fff0c7;
+}
+
+.progress-panel {
+  grid-column: 1 / -1;
+  padding: 15px;
+  background: #f0f8f7;
+  border: 1px solid #c8e1df;
+  border-radius: 12px;
+}
+
+.progress-panel.is-hidden {
+  display: none;
+}
+
+.progress-copy {
+  display: flex;
+  gap: 15px;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 9px;
+}
+
+.progress-copy span {
+  margin: 0;
+  font-weight: 800;
+  color: #177b80;
+}
+
+.progress-track {
+  height: 13px;
+  overflow: hidden;
+  background: #d8e7e5;
+  border-radius: 999px;
+}
+
+.progress-fill {
+  min-width: 8px;
+  height: 100%;
+  background: linear-gradient(90deg, #11757b, #26b7b2, #11757b);
+  background-size: 200% 100%;
+  border-radius: inherit;
+  transition: width 0.45s ease;
+  animation: progress-wave 1.4s linear infinite;
+}
+
+.progress-panel small {
+  display: block;
+  margin-top: 9px;
+  color: #647d80;
+}
+
+.empty {
+  color: #708689;
+}
+
+.delete-form {
+  grid-column: 1 / -1;
+  text-align: right;
+}
+
+.danger {
+  padding: 8px 14px;
+  color: #a93831;
+  background: #fff;
+  border: 1px solid #e7aaa6;
+}
+
+.folder-head {
+  display: flex;
+  gap: 20px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 28px;
+  margin-bottom: 20px;
+  color: #fff;
+  background: linear-gradient(120deg, #174f58, #15999b);
+  border-radius: 16px;
+}
+
+.folder-head h1,
+.folder-head p {
+  margin: 4px 0;
+}
+
+.folder-actions {
+  flex-wrap: wrap;
+}
+
+.file-actions,
+.print-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.file {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 15px;
+  align-items: center;
+  padding: 16px;
+}
+
+.file-icon {
+  display: grid;
+  width: 48px;
+  height: 48px;
+  place-items: center;
+  font-size: 12px;
+  font-weight: 800;
+  color: #147278;
+  background: #e5f5f2;
+  border-radius: 10px;
+}
+
+.print-page {
+  height: 100vh;
+  overflow: hidden;
+  background: #dce7e5;
+}
+
+.print-toolbar {
+  height: 78px;
+}
+
+.print-frame {
+  width: 100%;
+  height: calc(100vh - 78px);
+  border: 0;
+}
+
+@keyframes progress-wave {
+  to {
+    background-position: -200% 0;
+  }
+}
+
+@media (max-width: 700px) {
+  .grid,
+  .job {
+    grid-template-columns: 1fr;
+  }
+
+  .credentials {
+    grid-template-columns: 1fr;
+  }
+
+  .hero h1 {
+    font-size: 27px;
+  }
+
+  .folder-head {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .file {
+    grid-template-columns: auto 1fr;
+  }
+
+  .file .button {
+    grid-column: 1 / -1;
+    text-align: center;
+  }
+
+  .file-actions {
+    grid-column: 1 / -1;
+  }
+
+  .file-actions .button {
+    flex: 1;
+  }
+}
