@@ -634,9 +634,8 @@ def _buscar_internacion(page, trabajo):
     ).last
     opcion_internacion.wait_for(state="visible")
     opcion_internacion.click()
-    estado = "ACTIVAS" if trabajo["estado_paciente"] == "ACTIVO" else "TODAS"
     page.locator('[id="formSelectInternacion:j_idt378_label"]').click()
-    page.get_by_role("option", name=estado, exact=True).click()
+    page.get_by_role("option", name="TODAS", exact=True).click()
     campo = _campo_buscar(page)
     campo.fill(trabajo["internacion"])
     page.get_by_role("button", name="Buscar", exact=True).click()
@@ -723,6 +722,8 @@ def _ordenar_evoluciones(page, modal):
             for i in range(min(filas.count(), 10))
         ]
         fechas = [fecha for fecha in fechas if fecha]
+        if len(fechas) == 1:
+            return
         if len(fechas) >= 2 and fechas[0] <= fechas[-1]:
             return
         encabezado.click()

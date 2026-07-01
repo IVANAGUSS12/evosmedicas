@@ -194,6 +194,9 @@ def init_db():
             (ahora,),
         )
         con.execute(
+            "UPDATE trabajos SET estado_paciente = 'ALTA' WHERE estado_paciente = 'ACTIVO'"
+        )
+        con.execute(
             """UPDATE trabajos
                SET progreso = CASE
                    WHEN estado='COMPLETADO' THEN 100
@@ -269,6 +272,38 @@ def salir():
     return redirect(url_for("login"))
 
 
+@app.route("/mi-clave", methods=["GET", "POST"])
+@login_requerido
+def mi_clave():
+    if request.method == "POST":
+        clave_actual = request.form.get("clave_actual", "")
+        clave_nueva = request.form.get("clave_nueva", "")
+        clave_confirmacion = request.form.get("clave_confirmacion", "")
+        with db() as con:
+            usuario = con.execute(
+                "SELECT clave_hash FROM usuarios WHERE id = ?",
+                (session["usuario_id"],),
+            ).fetchone()
+            if not usuario or not check_password_hash(
+                usuario["clave_hash"], clave_actual
+            ):
+                flash("La contraseña actual no es correcta.")
+                return redirect(url_for("mi_clave"))
+            if len(clave_nueva) < 8:
+                flash("La contraseña nueva debe tener al menos 8 caracteres.")
+                return redirect(url_for("mi_clave"))
+            if clave_nueva != clave_confirmacion:
+                flash("La confirmación no coincide con la contraseña nueva.")
+                return redirect(url_for("mi_clave"))
+            con.execute(
+                "UPDATE usuarios SET clave_hash=? WHERE id=?",
+                (generate_password_hash(clave_nueva), session["usuario_id"]),
+            )
+        flash("Contraseña actualizada.")
+        return redirect(url_for("inicio"))
+    return render_template("mi_clave.html")
+
+
 @app.route("/")
 @login_requerido
 def inicio():
@@ -318,6 +353,7 @@ def crear_trabajo():
         flash("La fecha desde no puede ser posterior a la fecha hasta.")
         return redirect(url_for("inicio"))
 
+    estado_paciente = "ALTA"
     ahora = datetime.now().isoformat(timespec="seconds")
     with db() as con:
         cur = con.execute(
@@ -330,7 +366,7 @@ def crear_trabajo():
                 centro_atencion,
                 internacion,
                 dni,
-                request.form["estado_paciente"],
+                estado_paciente,
                 rango,
                 desde,
                 hasta,

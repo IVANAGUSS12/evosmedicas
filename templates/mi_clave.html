@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block contenido %}
+<section class="card login">
+  <h1>Cambiar contraseña</h1>
+  <form method="post">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <label>Contraseña actual<input name="clave_actual" type="password" required autocomplete="current-password"></label>
+    <label>Contraseña nueva<input name="clave_nueva" type="password" required autocomplete="new-password"></label>
+    <label>Confirmar contraseña nueva<input name="clave_confirmacion" type="password" required autocomplete="new-password"></label>
+    <button>Guardar contraseña</button>
+  </form>
+</section>
+{% endblock %}

@@ -12,6 +12,7 @@
     {% if session.usuario %}
       <nav>
         <span>{{ session.usuario }}</span>
+        <a href="{{ url_for('mi_clave') }}">Cambiar contraseña</a>
         {% if session.administrador %}<a href="{{ url_for('usuarios') }}">Usuarios</a>{% endif %}
         <form method="post" action="{{ url_for('salir') }}" class="logout-form">
           <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
