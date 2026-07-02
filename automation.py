@@ -27,7 +27,7 @@ DATA_DIR = Path(
     os.environ.get("SECRETARIO_DATA_DIR", str(BASE_DIR / "datos"))
 ).expanduser().resolve()
 DESCARGAS_DIR = DATA_DIR / "descargas"
-AUTOMATION_VERSION = "2026-06-30-a"
+AUTOMATION_VERSION = "2026-07-02-a"
 PLAYWRIGHT_SLOW_MO_MS = max(0, int(os.environ.get("PLAYWRIGHT_SLOW_MO_MS", "220")))
 PLAYWRIGHT_TIMEOUT_MS = max(20000, int(os.environ.get("PLAYWRIGHT_TIMEOUT_MS", "35000")))
 EVOLUCIONES_PAGINAS_POR_ARCHIVO = max(
@@ -1488,7 +1488,7 @@ def _epicrisis(page, trabajo, fecha_ingreso, carpeta):
         r"\b(\d{2}/\d{2}/(?:\d{2}|\d{4}))\b", fecha_ingreso
     )
     if not hallazgo:
-        raise RuntimeError("No pude interpretar la fecha de ingreso.")
+        raise RuntimeError("No pude interpretar la fecha de internacion.")
     fecha = datetime.strptime(
         hallazgo.group(1),
         "%d/%m/%y" if len(hallazgo.group(1)) == 8 else "%d/%m/%Y",
@@ -1578,7 +1578,7 @@ def _fecha_ingreso_date(fecha_ingreso):
         r"\b(\d{2}/\d{2}/(?:\d{2}|\d{4}))\b", fecha_ingreso
     )
     if not hallazgo:
-        raise RuntimeError("No pude interpretar la fecha de ingreso.")
+        raise RuntimeError("No pude interpretar la fecha de internación.")
     valor = hallazgo.group(1)
     formato = "%d/%m/%y" if len(valor) == 8 else "%d/%m/%Y"
     return datetime.strptime(valor, formato).date()
@@ -1743,6 +1743,58 @@ def _arrastrar_timeline_hacia_evento(page, evento, superficies):
     return False
 
 
+def _texto_evento_normalizado(texto):
+    texto = (texto or "").upper()
+    reemplazos = {
+        "Á": "A",
+        "É": "E",
+        "Í": "I",
+        "Ó": "O",
+        "Ú": "U",
+        "Ã“": "O",
+    }
+    for origen, destino in reemplazos.items():
+        texto = texto.replace(origen, destino)
+    return re.sub(r"\s+", " ", texto).strip()
+
+
+def _texto_es_evento_internacion(texto):
+    normalizado = _texto_evento_normalizado(texto)
+    return (
+        bool(re.search(r"\bINTERNACION\b", normalizado))
+        and not bool(re.search(r"\bSEGUIMIENTO\b", normalizado))
+    )
+
+
+def _evento_es_rojo(page, evento):
+    try:
+        color = evento.evaluate(
+            """(el) => {
+                const esItem = (node) =>
+                    node && node.classList && [...node.classList].some(
+                        (clase) => clase.includes('vis-item')
+                            || clase.toLowerCase().includes('item')
+                    );
+                let actual = esItem(el) ? el : el.closest('.vis-item, [class*="item"], [class*="Item"]');
+                for (let i = 0; actual && i < 4; i += 1, actual = actual.parentElement) {
+                    const estilo = getComputedStyle(actual);
+                    const color = estilo.backgroundColor || estilo.borderColor || '';
+                    if (color && color !== 'transparent' && color !== 'rgba(0, 0, 0, 0)') {
+                        return color;
+                    }
+                }
+                return '';
+            }"""
+        )
+    except Exception:
+        return None
+    numeros = [int(valor) for valor in re.findall(r"\d+", color or "")[:3]]
+    if len(numeros) < 3:
+        return None
+    rojo, verde, azul = numeros
+    return rojo >= 170 and rojo - max(verde, azul) >= 15
+
+
 def _localizar_evento_atencion(page, fecha_evento, trabajo=None):
     patrones = [
         re.compile(rf"{fecha_evento:%d/%m/%y}\s*-\s*\S+", re.I),
@@ -1805,6 +1857,28 @@ def _localizar_evento_atencion(page, fecha_evento, trabajo=None):
         ]
         if por_centro:
             candidatos = por_centro
+    por_tipo_internacion = [
+        candidato
+        for candidato in candidatos
+        if _texto_es_evento_internacion(candidato[1])
+    ]
+    if por_tipo_internacion:
+        candidatos = por_tipo_internacion
+    colores = [
+        (candidato, _evento_es_rojo(page, candidato[0]))
+        for candidato in candidatos
+    ]
+    rojos = [candidato for candidato, es_rojo in colores if es_rojo is True]
+    if rojos:
+        candidatos = rojos
+    elif por_tipo_internacion:
+        # Algunos ambientes no exponen el color al DOM; si el texto dice
+        # INTERNACION seguimos con ese evento y evitamos SEGUIMIENTO.
+        candidatos = por_tipo_internacion
+    elif any(es_rojo is False for _, es_rojo in colores):
+        raise RuntimeError(
+            "Encontré eventos para la fecha, pero ninguno era una internación roja."
+        )
     if candidatos:
         return candidatos[0][0]
     raise RuntimeError(
@@ -1916,6 +1990,56 @@ def _checkbox_posterior(modal, texto):
     return caja
 
 
+def _descargar_pdf_indicaciones(page, modal, destino, intentos=3):
+    ultimo = None
+    for _ in range(intentos):
+        _cerrar_paginas_secundarias(page)
+        paginas_antes = {id(pagina) for pagina in page.context.pages}
+        try:
+            with page.expect_popup(timeout=180000) as popup_info:
+                modal.get_by_role(
+                    "button", name="Aceptar", exact=True
+                ).click()
+            popup = popup_info.value
+        except PlaywrightTimeout as exc:
+            popup = _buscar_pagina_secundaria(
+                page, paginas_antes, timeout=15000
+            )
+            if popup is None:
+                ultimo = exc
+                page.wait_for_timeout(1500)
+                continue
+        try:
+            popup.wait_for_load_state("domcontentloaded")
+            popup.wait_for_url(
+                re.compile(r"\.pdf(?:$|\?)", re.I), timeout=180000
+            )
+            respuesta = popup.context.request.get(popup.url)
+            if not respuesta.ok:
+                raise RuntimeError(
+                    f"El PDF de indicaciones respondio HTTP {respuesta.status}."
+                )
+            destino.write_bytes(respuesta.body())
+            popup.close()
+            if not _pdf_valido(destino):
+                raise RuntimeError("El PDF de indicaciones quedo incompleto.")
+            return
+        except Exception as exc:
+            ultimo = exc
+            try:
+                popup.close()
+            except Exception:
+                pass
+            try:
+                destino.unlink(missing_ok=True)
+            except Exception:
+                pass
+            page.wait_for_timeout(2000)
+    raise RuntimeError(
+        f"No se pudo descargar el PDF de indicaciones luego de {intentos} intentos: {ultimo}"
+    )
+
+
 def _indicaciones(page, trabajo, fecha_ingreso, carpeta):
     fecha_evento = datetime.combine(_fecha_ingreso_date(fecha_ingreso), datetime.min.time())
     boton_historia = page.get_by_role(
@@ -1963,33 +2087,7 @@ def _indicaciones(page, trabajo, fecha_ingreso, carpeta):
         )
 
     temporal = carpeta / "_indicaciones_completo.pdf"
-    _cerrar_paginas_secundarias(page)
-    paginas_antes = {id(pagina) for pagina in page.context.pages}
-    try:
-        with page.expect_popup(timeout=180000) as popup_info:
-            modal.get_by_role(
-                "button", name="Aceptar", exact=True
-            ).click()
-        popup = popup_info.value
-    except PlaywrightTimeout as exc:
-        popup = _buscar_pagina_secundaria(
-            page, paginas_antes, timeout=15000
-        )
-        if popup is None:
-            raise RuntimeError(
-                "No se abrio el popup del PDF de indicaciones."
-            ) from exc
-    popup.wait_for_load_state("domcontentloaded")
-    popup.wait_for_url(
-        re.compile(r"\.pdf(?:$|\?)", re.I), timeout=180000
-    )
-    respuesta = popup.context.request.get(popup.url)
-    if not respuesta.ok:
-        raise RuntimeError(
-            f"El PDF de indicaciones respondió HTTP {respuesta.status}."
-        )
-    temporal.write_bytes(respuesta.body())
-    popup.close()
+    _descargar_pdf_indicaciones(page, modal, temporal)
 
     desde, hasta, _, _ = _rango_indicaciones(trabajo, fecha_ingreso)
     _recortar_pdf(
@@ -2035,7 +2133,10 @@ def ejecutar_trabajo(trabajo, usuario, clave, informar):
             )
             ejecutar_paso("inicio de sesión", lambda: _login(page, usuario, clave))
 
-            fecha_ingreso = progreso.get("admision", {}).get("fecha_ingreso")
+            fecha_ingreso = (
+                progreso.get("admision", {}).get("fecha_internacion")
+                or progreso.get("admision", {}).get("fecha_ingreso")
+            )
             en_ficha_admision = False
             necesita_admision = (
                 not _seccion_completa(progreso, "admision")
@@ -2044,7 +2145,7 @@ def ejecutar_trabajo(trabajo, usuario, clave, informar):
             if necesita_admision:
                 informar(
                     "EN PROCESO",
-                    "Buscando admisión y fecha de ingreso...",
+                    "Buscando admisión y fecha de internación...",
                 )
                 fecha_ingreso = ejecutar_paso(
                     "búsqueda de admisión",
@@ -2055,12 +2156,13 @@ def ejecutar_trabajo(trabajo, usuario, clave, informar):
                     carpeta,
                     progreso,
                     "admision",
+                    fecha_internacion=fecha_ingreso,
                     fecha_ingreso=fecha_ingreso,
                 )
             else:
                 informar(
                     "EN PROCESO",
-                    f"Admisión ya validada. Ingreso: {fecha_ingreso}.",
+                    f"Admisión ya validada. Internación: {fecha_ingreso}.",
                 )
 
             informe = carpeta / "INFORME DE HOSPITALIZACION.pdf"
