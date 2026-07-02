@@ -27,7 +27,7 @@ DATA_DIR = Path(
     os.environ.get("SECRETARIO_DATA_DIR", str(BASE_DIR / "datos"))
 ).expanduser().resolve()
 DESCARGAS_DIR = DATA_DIR / "descargas"
-AUTOMATION_VERSION = "2026-07-02-a"
+AUTOMATION_VERSION = "2026-07-02-c"
 PLAYWRIGHT_SLOW_MO_MS = max(0, int(os.environ.get("PLAYWRIGHT_SLOW_MO_MS", "220")))
 PLAYWRIGHT_TIMEOUT_MS = max(20000, int(os.environ.get("PLAYWRIGHT_TIMEOUT_MS", "35000")))
 EVOLUCIONES_PAGINAS_POR_ARCHIVO = max(
@@ -731,6 +731,20 @@ def _ordenar_evoluciones(page, modal):
     raise RuntimeError("No se pudo ordenar las evoluciones cronológicamente.")
 
 
+def _modal_evoluciones_sin_registros(modal):
+    try:
+        texto = re.sub(r"\s+", " ", modal.inner_text(timeout=3000))
+    except Exception:
+        texto = ""
+    return bool(
+        re.search(
+            r"No se encontraron|Sin registros|No existen registros",
+            texto,
+            re.I,
+        )
+    )
+
+
 def _volver_primera_pagina(page, modal):
     primera = modal.locator(
         ".ui-paginator-first:not(.ui-state-disabled)"
@@ -1412,6 +1426,9 @@ def _evoluciones(page, trabajo, fecha_ingreso, carpeta, progreso):
     page.get_by_role("button", name="Imprimir Evoluciones").click()
     modal = page.get_by_label("Imprimir")
     modal.wait_for(state="visible", timeout=60000)
+    if _modal_evoluciones_sin_registros(modal):
+        _cerrar_modal_evoluciones(page)
+        return False
     _ordenar_evoluciones(page, modal)
 
     desde, hasta = _rango_solicitado(trabajo, fecha_ingreso)
@@ -1420,7 +1437,8 @@ def _evoluciones(page, trabajo, fecha_ingreso, carpeta, progreso):
         page, modal, desde, hasta
     )
     if not paginas:
-        raise RuntimeError("No hay evoluciones en el rango solicitado.")
+        _cerrar_modal_evoluciones(page)
+        return False
     _cerrar_modal_evoluciones(page)
 
     primera, ultima = paginas[0], paginas[-1]
@@ -1478,6 +1496,7 @@ def _evoluciones(page, trabajo, fecha_ingreso, carpeta, progreso):
                 pagina_hasta,
             )
     _cerrar_impresion_abierta(page)
+    return True
 
 
 def _epicrisis(page, trabajo, fecha_ingreso, carpeta):
@@ -1550,6 +1569,11 @@ def _epicrisis(page, trabajo, fecha_ingreso, carpeta):
         ]
         if len(internados) == 1:
             candidatos = internados
+    if not candidatos:
+        volver = page.get_by_role("button", name="Volver", exact=True)
+        if volver.count():
+            volver.click()
+        return False
     if len(candidatos) != 1:
         raise RuntimeError(
             f"Se encontraron {len(candidatos)} epicrisis para "
@@ -1571,6 +1595,7 @@ def _epicrisis(page, trabajo, fecha_ingreso, carpeta):
     volver = page.get_by_role("button", name="Volver", exact=True)
     if volver.count():
         volver.click()
+    return True
 
 
 def _fecha_ingreso_date(fecha_ingreso):
@@ -1990,6 +2015,23 @@ def _checkbox_posterior(modal, texto):
     return caja
 
 
+def _checkbox_posterior_opcional(modal, texto):
+    etiqueta = modal.get_by_text(texto, exact=True)
+    if not etiqueta.count():
+        return None
+    try:
+        if not etiqueta.first.is_visible():
+            return None
+    except Exception:
+        return None
+    caja = etiqueta.first.locator(
+        "xpath=following::*[contains(@class,'ui-chkbox-box')][1]"
+    )
+    if caja.count() != 1:
+        return None
+    return caja
+
+
 def _descargar_pdf_indicaciones(page, modal, destino, intentos=3):
     ultimo = None
     for _ in range(intentos):
@@ -2073,16 +2115,23 @@ def _indicaciones(page, trabajo, fecha_ingreso, carpeta):
     ):
         seleccionar_todos.click()
         page.wait_for_timeout(500)
+    seleccionadas = 0
     for nombre in ("Indicaciones", "Prescripciones"):
-        caja = _checkbox_posterior(modal, nombre)
+        caja = _checkbox_posterior_opcional(modal, nombre)
+        if caja is None:
+            continue
         if "ui-state-active" not in (
             caja.get_attribute("class") or ""
         ):
             caja.click()
+        seleccionadas += 1
+    if not seleccionadas:
+        page.get_by_role("button", name="Cerrar", exact=True).click()
+        return False
     activas = modal.locator(".ui-chkbox-box.ui-state-active")
-    if activas.count() != 2:
+    if activas.count() != seleccionadas:
         raise RuntimeError(
-            f"Debían quedar 2 casillas activas y quedaron "
+            f"Debian quedar {seleccionadas} casillas activas y quedaron "
             f"{activas.count()}."
         )
 
@@ -2090,13 +2139,20 @@ def _indicaciones(page, trabajo, fecha_ingreso, carpeta):
     _descargar_pdf_indicaciones(page, modal, temporal)
 
     desde, hasta, _, _ = _rango_indicaciones(trabajo, fecha_ingreso)
-    _recortar_pdf(
-        temporal,
-        carpeta / "INDICACIONES Y PRESCRIPCIONES MEDICAS.pdf",
-        desde,
-        hasta,
-    )
+    try:
+        _recortar_pdf(
+            temporal,
+            carpeta / "INDICACIONES Y PRESCRIPCIONES MEDICAS.pdf",
+            desde,
+            hasta,
+        )
+    except RuntimeError as exc:
+        if "no conten" not in str(exc).casefold():
+            raise
+        temporal.unlink(missing_ok=True)
+        return False
     temporal.unlink(missing_ok=True)
+    return True
 
 
 def ejecutar_trabajo(trabajo, usuario, clave, informar):
@@ -2274,17 +2330,28 @@ def ejecutar_trabajo(trabajo, usuario, clave, informar):
                     "EN PROCESO",
                     "Procesando evoluciones médicas...",
                 )
-                ejecutar_paso(
+                evoluciones_descargadas = ejecutar_paso(
                     "descarga de evoluciones médicas",
                     lambda: _evoluciones(
                         page, trabajo, fecha_ingreso, carpeta, progreso
                     ),
                 )
-                _completar_seccion(carpeta, progreso, "evoluciones")
-                informar(
-                    "EN PROCESO",
-                    "Evoluciones médicas descargadas.",
+                _completar_seccion(
+                    carpeta,
+                    progreso,
+                    "evoluciones",
+                    omitida=not evoluciones_descargadas,
                 )
+                if evoluciones_descargadas:
+                    informar(
+                        "EN PROCESO",
+                        "Evoluciones médicas descargadas.",
+                    )
+                else:
+                    informar(
+                        "EN PROCESO",
+                        "Sin evoluciones para descargar; se omite.",
+                    )
             else:
                 informar(
                     "EN PROCESO",
@@ -2295,12 +2362,20 @@ def ejecutar_trabajo(trabajo, usuario, clave, informar):
 
             if necesita_epicrisis:
                 informar("EN PROCESO", "Procesando epicrisis...")
-                ejecutar_paso(
+                epicrisis_descargada = ejecutar_paso(
                     "descarga de epicrisis",
                     lambda: _epicrisis(page, trabajo, fecha_ingreso, carpeta),
                 )
-                _completar_seccion(carpeta, progreso, "epicrisis")
-                informar("EN PROCESO", "Epicrisis descargada.")
+                _completar_seccion(
+                    carpeta,
+                    progreso,
+                    "epicrisis",
+                    omitida=not epicrisis_descargada,
+                )
+                if epicrisis_descargada:
+                    informar("EN PROCESO", "Epicrisis descargada.")
+                else:
+                    informar("EN PROCESO", "Sin epicrisis para descargar; se omite.")
             else:
                 informar(
                     "EN PROCESO",
@@ -2318,15 +2393,26 @@ def ejecutar_trabajo(trabajo, usuario, clave, informar):
                     f"{solicitado_hasta:%d/%m/%Y}; búsqueda ampliada "
                     f"{ind_desde:%d/%m/%Y} al {ind_hasta:%d/%m/%Y})...",
                 )
-                ejecutar_paso(
+                indicaciones_descargadas = ejecutar_paso(
                     "descarga de indicaciones y prescripciones",
                     lambda: _indicaciones(page, trabajo, fecha_ingreso, carpeta),
                 )
-                _completar_seccion(carpeta, progreso, "indicaciones")
-                informar(
-                    "EN PROCESO",
-                    "Indicaciones descargadas.",
+                _completar_seccion(
+                    carpeta,
+                    progreso,
+                    "indicaciones",
+                    omitida=not indicaciones_descargadas,
                 )
+                if indicaciones_descargadas:
+                    informar(
+                        "EN PROCESO",
+                        "Indicaciones descargadas.",
+                    )
+                else:
+                    informar(
+                        "EN PROCESO",
+                        "Sin indicaciones ni prescripciones para descargar; se omite.",
+                    )
             else:
                 informar(
                     "EN PROCESO",
